@@ -1,23 +1,26 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
 use log::{info, warn};
 use atlas_common::collections::HashMap;
+use atlas_common::error::*;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::networking::serialize::PermissionedOrderingProtocolMessage;
-use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, VTMsg, VTResult, VTTimeoutResult};
+use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, VTMsg, VTPollResult, VTResult, VTTimeoutResult};
 use atlas_core::ordering_protocol::{PermissionedOrderingProtocol, View};
 use atlas_core::ordering_protocol::networking::ViewTransferProtocolSendNode;
+use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::RqTimeout;
 use atlas_metrics::metrics::metric_duration;
+use crate::message::serialize::ViewTransfer;
 use crate::metrics::VIEW_TRANSFER_PROCESS_MESSAGE_TIME_ID;
-use crate::serialize::{ViewTransfer, ViewTransferMessage, ViewTransferMessageKind};
+use crate::message::{ViewTransferMessage, ViewTransferMessageKind};
 
-mod serialize;
 mod metrics;
+pub mod message;
 
 /// The current state of the transfer protocol
 pub enum TransferState<V> {
@@ -29,19 +32,19 @@ pub enum TransferState<V> {
 
 /// The struct that delines the behaviour of a simple
 /// view change message
-pub struct SimpleViewTransferProtocol<VT, NT>
-    where VT: PermissionedOrderingProtocolMessage {
+pub struct SimpleViewTransferProtocol<OP, NT>
+    where OP: PermissionedOrderingProtocol {
     current_seq_no: SeqNo,
     // The nodes we currently know
     known_nodes: BTreeSet<NodeId>,
     // The current state of the view transfer protocol
-    current_state: TransferState<View<VT>>,
+    current_state: TransferState<View<OP::PermissionedSerialization>>,
     // The node type
     node: Arc<NT>,
 }
 
-impl<VT, NT> SimpleViewTransferProtocol<VT, NT>
-    where VT: PermissionedOrderingProtocolMessage {
+impl<OP, NT> SimpleViewTransferProtocol<OP, NT>
+    where OP: PermissionedOrderingProtocol {
     fn next_seq(&mut self) {
         self.current_seq_no = self.current_seq_no.next()
     }
@@ -59,17 +62,16 @@ enum ViewTransferResponse<V> {
     Ignored,
     NoneFound,
     ReRunProtocol,
-    ViewReceived(V)
+    ViewReceived(V),
 }
 
-impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::PermissionedSerialization, NT> where OP: PermissionedOrderingProtocol {
-
+impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
+    where OP: PermissionedOrderingProtocol {
     type Serialization = ViewTransfer<OP::PermissionedSerialization>;
     type Config = ();
 
-    fn initialize_view_transfer_protocol(config: Self::Config, net: Arc<NT>, view: Vec<NodeId>) -> atlas_common::error::Result<Self>
+    fn initialize_view_transfer_protocol(config: Self::Config, net: Arc<NT>, view: Vec<NodeId>) -> Result<Self>
         where NT: ViewTransferProtocolSendNode<Self::Serialization> {
-
         let mut known_nodes = BTreeSet::new();
 
         for node in view {
@@ -84,18 +86,26 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::Per
         })
     }
 
-    fn request_latest_view(&mut self, op: &OP) -> atlas_common::error::Result<()>
+    fn poll(&mut self) -> Result<VTPollResult<VTMsg<Self::Serialization>>> where NT: ViewTransferProtocolSendNode<Self::Serialization> {
+        Ok(VTPollResult::ReceiveMsg)
+    }
+
+    fn request_latest_view(&mut self, op: &OP) -> Result<()>
         where NT: ViewTransferProtocolSendNode<Self::Serialization> {
         let message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(self.sequence_number(), ViewTransferMessageKind::RequestView);
 
-        self.node.broadcast_signed(message, self.known_nodes.clone().into_iter())?;
+        let _ = self.node.broadcast_signed(message, self.known_nodes.clone().into_iter());
 
         self.current_state = TransferState::Requested(OP::get_quorum_for_n(self.known_nodes.len()), 0, Default::default());
 
         Ok(())
     }
 
-    fn process_message(&mut self, op: &mut OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> atlas_common::error::Result<VTResult>
+    fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult> where NT: ViewTransferProtocolSendNode<Self::Serialization>, OP: PermissionedOrderingProtocol {
+        todo!()
+    }
+
+    fn process_message(&mut self, op: &mut OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult>
         where NT: ViewTransferProtocolSendNode<Self::Serialization> {
         let start = Instant::now();
 
@@ -107,7 +117,7 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::Per
             ViewTransferMessageKind::RequestView => {
                 let response_message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(seq, ViewTransferMessageKind::ViewResponse(op.view()));
 
-                self.node.send_signed(response_message, header.from(), false)?;
+                let _ = self.node.send_signed(response_message, header.from(), false);
 
                 ViewTransferResponse::NoneFound
             }
@@ -146,7 +156,7 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::Per
                                 if *count >= quorum {
                                     let mut x = received.remove(digest).unwrap();
 
-                                    Some(x.pop().unwrap().into_view())
+                                    ViewTransferResponse::ViewReceived(x.pop().unwrap().into_view())
                                 } else if received_count.len() > 1 {
                                     // If we have more than one different view with more than f votes,
                                     // Then we have a problem.
@@ -161,7 +171,7 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::Per
                                         let view = view.first().unwrap();
 
                                         for node in view.view().quorum_members() {
-                                            self.known_nodes.insert(node)
+                                            self.known_nodes.insert(*node);
                                         }
                                     });
 
@@ -184,6 +194,10 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::Per
                         ViewTransferResponse::Ignored
                     }
                 }
+            }
+            ViewTransferMessageKind::ViewResponse(_) => {
+                info!("Received a view response message with the wrong sequence number {:?} vs {:?}", seq, self.sequence_number());
+                ViewTransferResponse::Ignored
             }
         };
 
@@ -211,13 +225,14 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP::Per
         }
     }
 
-    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> atlas_common::error::Result<VTTimeoutResult>
+    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<VTTimeoutResult>
         where NT: ViewTransferProtocolSendNode<Self::Serialization> {
         todo!()
     }
 }
 
-impl<VT, NT> Orderable for SimpleViewTransferProtocol<VT, NT> {
+impl<OP, NT> Orderable for SimpleViewTransferProtocol<OP, NT>
+    where OP: PermissionedOrderingProtocol {
     fn sequence_number(&self) -> SeqNo {
         self.current_seq_no
     }

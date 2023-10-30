@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
-use log::{info, warn};
+use log::{debug, info, warn};
 use atlas_common::collections::HashMap;
 use atlas_common::error::*;
 use atlas_common::crypto::hash::Digest;
@@ -19,7 +19,7 @@ use crate::message::serialize::ViewTransfer;
 use crate::metrics::VIEW_TRANSFER_PROCESS_MESSAGE_TIME_ID;
 use crate::message::{ViewTransferMessage, ViewTransferMessageKind};
 
-mod metrics;
+pub mod metrics;
 pub mod message;
 
 /// The current state of the transfer protocol
@@ -94,15 +94,15 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
         where NT: ViewTransferProtocolSendNode<Self::Serialization> {
         let message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(self.sequence_number(), ViewTransferMessageKind::RequestView);
 
-        let _ = self.node.broadcast_signed(message, self.known_nodes.clone().into_iter());
+        self.current_state = TransferState::Requested(self.known_nodes.len(), 0, Default::default());
 
-        self.current_state = TransferState::Requested(OP::get_quorum_for_n(self.known_nodes.len()), 0, Default::default());
+        let _ = self.node.broadcast_signed(message, self.known_nodes.clone().into_iter());
 
         Ok(())
     }
 
     fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult> where NT: ViewTransferProtocolSendNode<Self::Serialization>, OP: PermissionedOrderingProtocol {
-        todo!()
+        Ok(VTResult::VTransferNotNeeded)
     }
 
     fn process_message(&mut self, op: &mut OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult>
@@ -128,17 +128,20 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
 
                         let received_by_digest = received_states.or_insert_with(Vec::new);
 
+                        let quorum = OP::get_quorum_for_n(*reqs_sent);
+
+                        *received_views += 1;
+
+                        debug!("Processed view message {} for view {:?}, quorum is {}, rqs sent {}", received_views, view, quorum, reqs_sent);
+
                         received_by_digest.push(ReceivedView {
                             node: header.from(),
                             digest: header.digest().clone(),
                             view,
                         });
 
-                        *received_views += 1;
-
-                        let quorum = OP::get_quorum_for_n(*reqs_sent);
-
                         if received_by_digest.len() >= quorum {
+
                             let f = OP::get_f_for_n(*reqs_sent);
 
                             let mut received_count: Vec<_> = received.iter().map(|(digest, views)| {
@@ -185,11 +188,13 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
                                 ViewTransferResponse::NoneFound
                             }
                         } else {
+
+                            info!("No view has been found");
                             ViewTransferResponse::NoneFound
                         }
                     }
                     TransferState::Idle => {
-                        info!("Received view message while view in idle. Message seq {:?}, header: {:?}, message: {:?}", seq, header, view);
+                        info!("Received view message while view transfer state is idle. Message seq {:?}, header: {:?}, message: {:?}", seq, header, view);
 
                         ViewTransferResponse::Ignored
                     }

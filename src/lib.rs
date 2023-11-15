@@ -101,7 +101,19 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
         Ok(())
     }
 
-    fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult> where NT: ViewTransferProtocolSendNode<Self::Serialization>, OP: PermissionedOrderingProtocol {
+    fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<ViewTransferMessage<View<OP::PermissionedSerialization>>>) -> Result<VTResult> where NT: ViewTransferProtocolSendNode<Self::Serialization>, OP: PermissionedOrderingProtocol {
+
+        debug!("Received off context view transfer message {:?}", message);
+
+        match message.message().kind() {
+            ViewTransferMessageKind::RequestView => {
+                let response_message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(message.message().sequence_number(), ViewTransferMessageKind::ViewResponse(op.view()));
+
+                let _ = self.node.send_signed(response_message, message.header().from(), false);
+            }
+            _ => {}
+        }
+
         Ok(VTResult::VTransferNotNeeded)
     }
 
@@ -141,7 +153,6 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
                         });
 
                         if received_by_digest.len() >= quorum {
-
                             let f = OP::get_f_for_n(*reqs_sent);
 
                             let mut received_count: Vec<_> = received.iter().map(|(digest, views)| {
@@ -158,8 +169,11 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
 
                                 if *count >= quorum {
                                     let mut x = received.remove(digest).unwrap();
+                                    let view = x.pop().unwrap().into_view();
 
-                                    ViewTransferResponse::ViewReceived(x.pop().unwrap().into_view())
+                                    info!("Finalized view transfer with discovered view {:?}", view);
+
+                                    ViewTransferResponse::ViewReceived(view)
                                 } else if received_count.len() > 1 {
                                     // If we have more than one different view with more than f votes,
                                     // Then we have a problem.
@@ -178,6 +192,8 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
                                         }
                                     });
 
+                                    info!("Failed to find view agreement, re running view transfer protocol");
+
                                     ViewTransferResponse::ReRunProtocol
                                 } else {
                                     warn!("Received quorum {} of views but we do not have {} matching views for any of them, {:?}", received_views, quorum, received);
@@ -188,8 +204,7 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
                                 ViewTransferResponse::NoneFound
                             }
                         } else {
-
-                            info!("No view has been found");
+                            info!("No view has been found yet");
                             ViewTransferResponse::NoneFound
                         }
                     }

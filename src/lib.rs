@@ -15,12 +15,14 @@ use atlas_core::ordering_protocol::networking::ViewTransferProtocolSendNode;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::RqTimeout;
 use atlas_metrics::metrics::metric_duration;
+use crate::config::ViewTransferConfig;
 use crate::message::serialize::ViewTransfer;
 use crate::metrics::VIEW_TRANSFER_PROCESS_MESSAGE_TIME_ID;
 use crate::message::{ViewTransferMessage, ViewTransferMessageKind};
 
 pub mod metrics;
 pub mod message;
+mod config;
 
 /// The current state of the transfer protocol
 pub enum TransferState<V> {
@@ -68,7 +70,7 @@ enum ViewTransferResponse<V> {
 impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
     where OP: PermissionedOrderingProtocol {
     type Serialization = ViewTransfer<OP::PermissionedSerialization>;
-    type Config = ();
+    type Config = ViewTransferConfig;
 
     fn initialize_view_transfer_protocol(config: Self::Config, net: Arc<NT>, view: Vec<NodeId>) -> Result<Self>
         where NT: ViewTransferProtocolSendNode<Self::Serialization> {

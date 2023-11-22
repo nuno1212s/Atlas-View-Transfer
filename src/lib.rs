@@ -22,7 +22,7 @@ use crate::message::{ViewTransferMessage, ViewTransferMessageKind};
 
 pub mod metrics;
 pub mod message;
-mod config;
+pub mod config;
 
 /// The current state of the transfer protocol
 pub enum TransferState<V> {

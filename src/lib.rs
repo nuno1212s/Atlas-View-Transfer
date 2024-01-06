@@ -69,6 +69,7 @@ enum ViewTransferResponse<V> {
 
 impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
     where OP: PermissionedOrderingProtocol {
+
     type Serialization = ViewTransfer<OP::PermissionedSerialization>;
     type Config = ViewTransferConfig;
 

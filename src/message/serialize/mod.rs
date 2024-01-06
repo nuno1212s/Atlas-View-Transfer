@@ -9,7 +9,7 @@ use atlas_core::ordering_protocol::View;
 use crate::message::ViewTransferMessage;
 
 /// View transfer type
-pub struct ViewTransfer<VT>(PhantomData<(VT)>);
+pub struct ViewTransfer<VT>(PhantomData<fn() -> VT>);
 
 impl<VT> ViewTransferProtocolMessage for ViewTransfer<VT>
     where VT: PermissionedOrderingProtocolMessage {

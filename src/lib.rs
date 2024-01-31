@@ -9,7 +9,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::networking::serialize::PermissionedOrderingProtocolMessage;
-use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, VTMsg, VTPollResult, VTResult, VTTimeoutResult};
+use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, ViewTransferProtocolInitializer, VTMsg, VTPollResult, VTResult, VTTimeoutResult};
 use atlas_core::ordering_protocol::{PermissionedOrderingProtocol, View};
 use atlas_core::ordering_protocol::networking::ViewTransferProtocolSendNode;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
@@ -41,7 +41,6 @@ pub struct SimpleViewTransferProtocol<OP, NT>
     known_nodes: BTreeSet<NodeId>,
     // The current state of the view transfer protocol
     current_state: TransferState<View<OP::PermissionedSerialization>>,
-    // The node type
     node: Arc<NT>,
 }
 
@@ -67,14 +66,12 @@ enum ViewTransferResponse<V> {
     ViewReceived(V),
 }
 
-impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
-    where OP: PermissionedOrderingProtocol {
-
-    type Serialization = ViewTransfer<OP::PermissionedSerialization>;
-    type Config = ViewTransferConfig;
+impl<OP, NT> ViewTransferProtocolInitializer<OP, NT> for SimpleViewTransferProtocol<OP, NT>
+    where OP: PermissionedOrderingProtocol,
+          NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>> {
 
     fn initialize_view_transfer_protocol(config: Self::Config, net: Arc<NT>, view: Vec<NodeId>) -> Result<Self>
-        where NT: ViewTransferProtocolSendNode<Self::Serialization> {
+        where Self: Sized {
         let mut known_nodes = BTreeSet::new();
 
         for node in view {
@@ -88,13 +85,19 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
             node: net,
         })
     }
+}
 
-    fn poll(&mut self) -> Result<VTPollResult<VTMsg<Self::Serialization>>> where NT: ViewTransferProtocolSendNode<Self::Serialization> {
+impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
+    where OP: PermissionedOrderingProtocol,
+          NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>> {
+    type Serialization = ViewTransfer<OP::PermissionedSerialization>;
+    type Config = ViewTransferConfig;
+
+    fn poll(&mut self) -> Result<VTPollResult<VTMsg<Self::Serialization>>> {
         Ok(VTPollResult::ReceiveMsg)
     }
 
-    fn request_latest_view(&mut self, op: &OP) -> Result<()>
-        where NT: ViewTransferProtocolSendNode<Self::Serialization> {
+    fn request_latest_view(&mut self, op: &OP) -> Result<()> {
         let message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(self.sequence_number(), ViewTransferMessageKind::RequestView);
 
         self.current_state = TransferState::Requested(self.known_nodes.len(), 0, Default::default());
@@ -104,8 +107,8 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
         Ok(())
     }
 
-    fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<ViewTransferMessage<View<OP::PermissionedSerialization>>>) -> Result<VTResult> where NT: ViewTransferProtocolSendNode<Self::Serialization>, OP: PermissionedOrderingProtocol {
-
+    fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<ViewTransferMessage<View<OP::PermissionedSerialization>>>) -> Result<VTResult>
+        where OP: PermissionedOrderingProtocol {
         debug!("Received off context view transfer message {:?}", message);
 
         match message.message().kind() {
@@ -120,8 +123,7 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
         Ok(VTResult::VTransferNotNeeded)
     }
 
-    fn process_message(&mut self, op: &mut OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult>
-        where NT: ViewTransferProtocolSendNode<Self::Serialization> {
+    fn process_message(&mut self, op: &mut OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult> {
         let start = Instant::now();
 
         let (header, message): (Header, ViewTransferMessage<View<OP::PermissionedSerialization>>) = message.into_inner();
@@ -248,8 +250,7 @@ impl<OP, NT> ViewTransferProtocol<OP, NT> for SimpleViewTransferProtocol<OP, NT>
         }
     }
 
-    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<VTTimeoutResult>
-        where NT: ViewTransferProtocolSendNode<Self::Serialization> {
+    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<VTTimeoutResult> {
         todo!()
     }
 }

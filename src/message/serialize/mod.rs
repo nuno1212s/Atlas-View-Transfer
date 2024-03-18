@@ -1,10 +1,10 @@
 use crate::message::ViewTransferMessage;
-use atlas_common::ordering::{Orderable, SeqNo};
+
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::NetworkInformationProvider;
-use atlas_communication::serialization::InternalMessageVerifier;
+
 use atlas_core::ordering_protocol::networking::serialize::{
-    OrderingProtocolMessage, PermissionedOrderingProtocolMessage, ViewTransferProtocolMessage,
+    PermissionedOrderingProtocolMessage, ViewTransferProtocolMessage,
 };
 use atlas_core::ordering_protocol::View;
 use std::marker::PhantomData;
@@ -22,9 +22,9 @@ where
     type ProtocolMessage = ViewTransferMessage<View<VT>>;
 
     fn internally_verify_message<NI>(
-        network_info: &Arc<NI>,
-        header: &Header,
-        message: &Self::ProtocolMessage,
+        _network_info: &Arc<NI>,
+        _header: &Header,
+        _message: &Self::ProtocolMessage,
     ) -> atlas_common::error::Result<()>
     where
         NI: NetworkInformationProvider,

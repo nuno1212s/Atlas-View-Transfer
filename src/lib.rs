@@ -9,7 +9,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::ordering_protocol::networking::serialize::PermissionedOrderingProtocolMessage;
+
 use atlas_core::ordering_protocol::networking::ViewTransferProtocolSendNode;
 use atlas_core::ordering_protocol::permissioned::{
     VTMsg, VTPollResult, VTResult, VTTimeoutResult, ViewTransferProtocol,
@@ -79,7 +79,7 @@ where
     NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>>,
 {
     fn initialize_view_transfer_protocol(
-        config: Self::Config,
+        _config: Self::Config,
         net: Arc<NT>,
         view: Vec<NodeId>,
     ) -> Result<Self>
@@ -113,7 +113,7 @@ where
         Ok(VTPollResult::ReceiveMsg)
     }
 
-    fn request_latest_view(&mut self, op: &OP) -> Result<()> {
+    fn request_latest_view(&mut self, _op: &OP) -> Result<()> {
         let message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(
             self.sequence_number(),
             ViewTransferMessageKind::RequestView,
@@ -203,7 +203,7 @@ where
 
                         received_by_digest.push(ReceivedView {
                             node: header.from(),
-                            digest: header.digest().clone(),
+                            digest: *header.digest(),
                             view,
                         });
 
@@ -212,11 +212,11 @@ where
 
                             let mut received_count: Vec<_> = received
                                 .iter()
-                                .map(|(digest, views)| (digest.clone(), views.len()))
-                                .filter(|(digest, views)| *views > f)
+                                .map(|(digest, views)| (*digest, views.len()))
+                                .filter(|(_digest, views)| *views > f)
                                 .collect();
 
-                            received_count.sort_by(|(digest, amount), (digest_2, amount_2)| {
+                            received_count.sort_by(|(_digest, amount), (_digest_2, amount_2)| {
                                 amount.cmp(amount_2).reverse()
                             });
 
@@ -243,7 +243,7 @@ where
                                     //FIXME: This could be solved by requiring quorum signatures of the
                                     // Views the nodes send, but that would increase development complexity
                                     // And we are currently striving for pace
-                                    received.iter().for_each(|(digest, view)| {
+                                    received.iter().for_each(|(_digest, view)| {
                                         let view = view.first().unwrap();
 
                                         for node in view.view().quorum_members() {
@@ -304,7 +304,7 @@ where
         }
     }
 
-    fn handle_timeout(&mut self, timeout: Vec<RqTimeout>) -> Result<VTTimeoutResult> {
+    fn handle_timeout(&mut self, _timeout: Vec<RqTimeout>) -> Result<VTTimeoutResult> {
         todo!()
     }
 }

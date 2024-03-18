@@ -1,6 +1,6 @@
-#[cfg(feature = "serialize_serde")]
-use serde::{Serialize, Deserialize};
 use atlas_common::ordering::{Orderable, SeqNo};
+#[cfg(feature = "serialize_serde")]
+use serde::{Deserialize, Serialize};
 
 pub mod serialize;
 

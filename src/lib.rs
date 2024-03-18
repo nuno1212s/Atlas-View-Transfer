@@ -1,28 +1,31 @@
-use std::collections::BTreeSet;
-use std::sync::Arc;
-use std::time::Instant;
-use log::{debug, info, warn};
+use crate::config::ViewTransferConfig;
+use crate::message::serialize::ViewTransfer;
+use crate::message::{ViewTransferMessage, ViewTransferMessageKind};
+use crate::metrics::VIEW_TRANSFER_PROCESS_MESSAGE_TIME_ID;
 use atlas_common::collections::HashMap;
-use atlas_common::error::*;
 use atlas_common::crypto::hash::Digest;
+use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::ordering_protocol::networking::serialize::PermissionedOrderingProtocolMessage;
-use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, ViewTransferProtocolInitializer, VTMsg, VTPollResult, VTResult, VTTimeoutResult};
-use atlas_core::ordering_protocol::{PermissionedOrderingProtocol, View};
-use atlas_core::ordering_protocol::networking::ViewTransferProtocolSendNode;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
+use atlas_core::ordering_protocol::networking::serialize::PermissionedOrderingProtocolMessage;
+use atlas_core::ordering_protocol::networking::ViewTransferProtocolSendNode;
+use atlas_core::ordering_protocol::permissioned::{
+    VTMsg, VTPollResult, VTResult, VTTimeoutResult, ViewTransferProtocol,
+    ViewTransferProtocolInitializer,
+};
+use atlas_core::ordering_protocol::{PermissionedOrderingProtocol, View};
 use atlas_core::timeouts::RqTimeout;
 use atlas_metrics::metrics::metric_duration;
-use crate::config::ViewTransferConfig;
-use crate::message::serialize::ViewTransfer;
-use crate::metrics::VIEW_TRANSFER_PROCESS_MESSAGE_TIME_ID;
-use crate::message::{ViewTransferMessage, ViewTransferMessageKind};
+use log::{debug, info, warn};
+use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::time::Instant;
 
-pub mod metrics;
-pub mod message;
 pub mod config;
+pub mod message;
+pub mod metrics;
 
 /// The current state of the transfer protocol
 pub enum TransferState<V> {
@@ -35,7 +38,9 @@ pub enum TransferState<V> {
 /// The struct that delines the behaviour of a simple
 /// view change message
 pub struct SimpleViewTransferProtocol<OP, NT>
-    where OP: PermissionedOrderingProtocol {
+where
+    OP: PermissionedOrderingProtocol,
+{
     current_seq_no: SeqNo,
     // The nodes we currently know
     known_nodes: BTreeSet<NodeId>,
@@ -45,7 +50,9 @@ pub struct SimpleViewTransferProtocol<OP, NT>
 }
 
 impl<OP, NT> SimpleViewTransferProtocol<OP, NT>
-    where OP: PermissionedOrderingProtocol {
+where
+    OP: PermissionedOrderingProtocol,
+{
     fn next_seq(&mut self) {
         self.current_seq_no = self.current_seq_no.next()
     }
@@ -67,11 +74,18 @@ enum ViewTransferResponse<V> {
 }
 
 impl<OP, NT> ViewTransferProtocolInitializer<OP, NT> for SimpleViewTransferProtocol<OP, NT>
-    where OP: PermissionedOrderingProtocol,
-          NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>> {
-
-    fn initialize_view_transfer_protocol(config: Self::Config, net: Arc<NT>, view: Vec<NodeId>) -> Result<Self>
-        where Self: Sized {
+where
+    OP: PermissionedOrderingProtocol,
+    NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>>,
+{
+    fn initialize_view_transfer_protocol(
+        config: Self::Config,
+        net: Arc<NT>,
+        view: Vec<NodeId>,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
         let mut known_nodes = BTreeSet::new();
 
         for node in view {
@@ -88,8 +102,10 @@ impl<OP, NT> ViewTransferProtocolInitializer<OP, NT> for SimpleViewTransferProto
 }
 
 impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
-    where OP: PermissionedOrderingProtocol,
-          NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>> {
+where
+    OP: PermissionedOrderingProtocol,
+    NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>>,
+{
     type Serialization = ViewTransfer<OP::PermissionedSerialization>;
     type Config = ViewTransferConfig;
 
@@ -98,24 +114,42 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
     }
 
     fn request_latest_view(&mut self, op: &OP) -> Result<()> {
-        let message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(self.sequence_number(), ViewTransferMessageKind::RequestView);
+        let message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(
+            self.sequence_number(),
+            ViewTransferMessageKind::RequestView,
+        );
 
-        self.current_state = TransferState::Requested(self.known_nodes.len(), 0, Default::default());
+        self.current_state =
+            TransferState::Requested(self.known_nodes.len(), 0, Default::default());
 
-        let _ = self.node.broadcast_signed(message, self.known_nodes.clone().into_iter());
+        let _ = self
+            .node
+            .broadcast_signed(message, self.known_nodes.clone().into_iter());
 
         Ok(())
     }
 
-    fn handle_off_context_msg(&mut self, op: &OP, message: StoredMessage<ViewTransferMessage<View<OP::PermissionedSerialization>>>) -> Result<VTResult>
-        where OP: PermissionedOrderingProtocol {
+    fn handle_off_context_msg(
+        &mut self,
+        op: &OP,
+        message: StoredMessage<ViewTransferMessage<View<OP::PermissionedSerialization>>>,
+    ) -> Result<VTResult>
+    where
+        OP: PermissionedOrderingProtocol,
+    {
         debug!("Received off context view transfer message {:?}", message);
 
         match message.message().kind() {
             ViewTransferMessageKind::RequestView => {
-                let response_message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(message.message().sequence_number(), ViewTransferMessageKind::ViewResponse(op.view()));
+                let response_message =
+                    ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(
+                        message.message().sequence_number(),
+                        ViewTransferMessageKind::ViewResponse(op.view()),
+                    );
 
-                let _ = self.node.send_signed(response_message, message.header().from(), false);
+                let _ = self
+                    .node
+                    .send_signed(response_message, message.header().from(), false);
             }
             _ => {}
         }
@@ -123,18 +157,31 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
         Ok(VTResult::VTransferNotNeeded)
     }
 
-    fn process_message(&mut self, op: &mut OP, message: StoredMessage<VTMsg<Self::Serialization>>) -> Result<VTResult> {
+    fn process_message(
+        &mut self,
+        op: &mut OP,
+        message: StoredMessage<VTMsg<Self::Serialization>>,
+    ) -> Result<VTResult> {
         let start = Instant::now();
 
-        let (header, message): (Header, ViewTransferMessage<View<OP::PermissionedSerialization>>) = message.into_inner();
+        let (header, message): (
+            Header,
+            ViewTransferMessage<View<OP::PermissionedSerialization>>,
+        ) = message.into_inner();
 
         let seq = message.sequence_number();
 
         let response = match message.into_kind() {
             ViewTransferMessageKind::RequestView => {
-                let response_message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(seq, ViewTransferMessageKind::ViewResponse(op.view()));
+                let response_message =
+                    ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(
+                        seq,
+                        ViewTransferMessageKind::ViewResponse(op.view()),
+                    );
 
-                let _ = self.node.send_signed(response_message, header.from(), false);
+                let _ = self
+                    .node
+                    .send_signed(response_message, header.from(), false);
 
                 ViewTransferResponse::NoneFound
             }
@@ -149,7 +196,10 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
 
                         *received_views += 1;
 
-                        debug!("Processed view message {} for view {:?}, quorum is {}, rqs sent {}", received_views, view, quorum, reqs_sent);
+                        debug!(
+                            "Processed view message {} for view {:?}, quorum is {}, rqs sent {}",
+                            received_views, view, quorum, reqs_sent
+                        );
 
                         received_by_digest.push(ReceivedView {
                             node: header.from(),
@@ -160,14 +210,15 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
                         if received_by_digest.len() >= quorum {
                             let f = OP::get_f_for_n(*reqs_sent);
 
-                            let mut received_count: Vec<_> = received.iter().map(|(digest, views)| {
-                                (digest.clone(), views.len())
-                            }).filter(|(digest, views)| {
-                                *views > f
-                            }).collect();
+                            let mut received_count: Vec<_> = received
+                                .iter()
+                                .map(|(digest, views)| (digest.clone(), views.len()))
+                                .filter(|(digest, views)| *views > f)
+                                .collect();
 
-                            received_count
-                                .sort_by(|(digest, amount), (digest_2, amount_2)| amount.cmp(amount_2).reverse());
+                            received_count.sort_by(|(digest, amount), (digest_2, amount_2)| {
+                                amount.cmp(amount_2).reverse()
+                            });
 
                             if received_count.len() == 1 {
                                 let (digest, count) = received_count.first().unwrap();
@@ -176,7 +227,10 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
                                     let mut x = received.remove(digest).unwrap();
                                     let view = x.pop().unwrap().into_view();
 
-                                    info!("Finalized view transfer with discovered view {:?}", view);
+                                    info!(
+                                        "Finalized view transfer with discovered view {:?}",
+                                        view
+                                    );
 
                                     ViewTransferResponse::ViewReceived(view)
                                 } else if received_count.len() > 1 {
@@ -221,7 +275,11 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
                 }
             }
             ViewTransferMessageKind::ViewResponse(_) => {
-                info!("Received a view response message with the wrong sequence number {:?} vs {:?}", seq, self.sequence_number());
+                info!(
+                    "Received a view response message with the wrong sequence number {:?} vs {:?}",
+                    seq,
+                    self.sequence_number()
+                );
                 ViewTransferResponse::Ignored
             }
         };
@@ -241,12 +299,8 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
 
                 Ok(VTResult::VTransferRunning)
             }
-            ViewTransferResponse::Ignored => {
-                Ok(VTResult::VTransferNotNeeded)
-            }
-            ViewTransferResponse::NoneFound => {
-                Ok(VTResult::VTransferRunning)
-            }
+            ViewTransferResponse::Ignored => Ok(VTResult::VTransferNotNeeded),
+            ViewTransferResponse::NoneFound => Ok(VTResult::VTransferRunning),
         }
     }
 
@@ -256,7 +310,9 @@ impl<OP, NT> ViewTransferProtocol<OP> for SimpleViewTransferProtocol<OP, NT>
 }
 
 impl<OP, NT> Orderable for SimpleViewTransferProtocol<OP, NT>
-    where OP: PermissionedOrderingProtocol {
+where
+    OP: PermissionedOrderingProtocol,
+{
     fn sequence_number(&self) -> SeqNo {
         self.current_seq_no
     }

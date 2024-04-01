@@ -13,6 +13,7 @@ serialize_capnp = []
 default = ["serialize_serde"]
 
 [dependencies]
+lazy_static = "1"
 anyhow = "1.0"
 thiserror = "1.0"
 atlas-common = { path = "../Atlas-Common" , default-features = true}

@@ -16,8 +16,9 @@ use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocolInitializer,
 };
 use atlas_core::ordering_protocol::{PermissionedOrderingProtocol, View};
-use atlas_core::timeouts::RqTimeout;
+use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_metrics::metrics::metric_duration;
+use lazy_static::lazy_static;
 use log::{debug, info, warn};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -82,6 +83,7 @@ where
         _config: Self::Config,
         net: Arc<NT>,
         view: Vec<NodeId>,
+        _timeout_mod_handle: TimeoutModHandle,
     ) -> Result<Self>
     where
         Self: Sized,
@@ -98,6 +100,24 @@ where
             current_state: TransferState::Idle,
             node: net,
         })
+    }
+}
+
+lazy_static! {
+    static ref MOD_NAME: Arc<str> = Arc::from("ATLAS_VIEW_TRANSFER");
+}
+
+impl<OP, NT> TimeoutableMod<VTTimeoutResult> for SimpleViewTransferProtocol<OP, NT>
+where
+    OP: PermissionedOrderingProtocol,
+    NT: ViewTransferProtocolSendNode<ViewTransfer<OP::PermissionedSerialization>>,
+{
+    fn mod_name() -> Arc<str> {
+        MOD_NAME.clone()
+    }
+
+    fn handle_timeout(&mut self, timeout: Vec<ModTimeout>) -> Result<VTTimeoutResult> {
+        todo!()
     }
 }
 
@@ -139,19 +159,15 @@ where
     {
         debug!("Received off context view transfer message {:?}", message);
 
-        match message.message().kind() {
-            ViewTransferMessageKind::RequestView => {
-                let response_message =
-                    ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(
-                        message.message().sequence_number(),
-                        ViewTransferMessageKind::ViewResponse(op.view()),
-                    );
+        if let ViewTransferMessageKind::RequestView = message.message().kind() {
+            let response_message = ViewTransferMessage::<View<OP::PermissionedSerialization>>::new(
+                message.message().sequence_number(),
+                ViewTransferMessageKind::ViewResponse(op.view()),
+            );
 
-                let _ = self
-                    .node
-                    .send_signed(response_message, message.header().from(), false);
-            }
-            _ => {}
+            let _ = self
+                .node
+                .send_signed(response_message, message.header().from(), false);
         }
 
         Ok(VTResult::VTransferNotNeeded)
@@ -302,10 +318,6 @@ where
             ViewTransferResponse::Ignored => Ok(VTResult::VTransferNotNeeded),
             ViewTransferResponse::NoneFound => Ok(VTResult::VTransferRunning),
         }
-    }
-
-    fn handle_timeout(&mut self, _timeout: Vec<RqTimeout>) -> Result<VTTimeoutResult> {
-        todo!()
     }
 }
 

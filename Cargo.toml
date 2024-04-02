@@ -20,7 +20,7 @@ atlas-common = { path = "../Atlas-Common" , default-features = true}
 atlas-communication = { path = "../Atlas-Communication" }
 atlas-core = { path = "../Atlas-Core" }
 atlas-metrics = {path = "../Atlas-Metrics"}
-log = "0.4.20"
+tracing = "*"
 
 bincode = { version = "2.0.0-rc.3", features = ["serde"], optional = true }
 

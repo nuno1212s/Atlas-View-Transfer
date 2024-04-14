@@ -19,10 +19,10 @@ use atlas_core::ordering_protocol::{PermissionedOrderingProtocol, View};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_metrics::metrics::metric_duration;
 use lazy_static::lazy_static;
-use tracing::{debug, info, warn};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::{debug, info, warn};
 
 pub mod config;
 pub mod message;
